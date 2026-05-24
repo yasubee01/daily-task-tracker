@@ -370,6 +370,30 @@
   .day-label { font-size: 11px; color: var(--muted); font-weight: 500; }
   .today-mark { width: 5px; height: 5px; border-radius: 50%; background: var(--green); }
 
+  .move-btns {
+    display: flex;
+    flex-direction: column;
+    gap: 0px;
+    flex-shrink: 0;
+  }
+  .move-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 5px;
+    color: #c8d8c4;
+    font-size: 14px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s;
+    border-radius: 4px;
+    font-family: sans-serif;
+  }
+  .move-btn:active { color: var(--green); background: var(--green-light); }
+  .move-btn:disabled { opacity: 0.15; cursor: default; }
+
   /* リセット */
   .reset-row { text-align: center; margin-top: 6px; }
   .reset-btn {
@@ -381,6 +405,63 @@
     font-family: 'Zen Kaku Gothic New', sans-serif;
     text-decoration: underline;
   }
+
+  /* 月間グラフカード */
+  .month-card {
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 16px 18px 14px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  .month-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .month-card-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .month-legend {
+    display: flex;
+    gap: 10px;
+    font-size: 10px;
+    color: var(--muted);
+    align-items: center;
+  }
+  .legend-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 3px;
+  }
+  .month-dots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .day-dot {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: default;
+    transition: transform 0.1s;
+  }
+  .day-dot.achieved { background: #3b82f6; color: #fff; }
+  .day-dot.failed   { background: #ef4444; color: #fff; }
+  .day-dot.today    { background: var(--green); color: #fff; box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--green); }
+  .day-dot.future   { background: #e8ede6; color: #b0bfaa; }
+  .day-dot.empty    { background: transparent; }
 
   /* 完了メッセージ */
   .all-done-msg {
@@ -421,6 +502,18 @@
 </div>
 
 <div class="main">
+
+  <div class="month-card">
+    <div class="month-card-head">
+      <span class="month-card-title" id="month-card-title">5月の記録</span>
+      <div class="month-legend">
+        <span><span class="legend-dot" style="background:#3b82f6"></span>達成</span>
+        <span><span class="legend-dot" style="background:#ef4444"></span>未達</span>
+        <span><span class="legend-dot" style="background:var(--green)"></span>今日</span>
+      </div>
+    </div>
+    <div class="month-dots" id="month-dots"></div>
+  </div>
 
   <div class="progress-card">
     <div class="pct-row">
@@ -494,7 +587,11 @@ const DEFAULT_TASKS = [
   { id:9, text:'BOOTHで本を出す', cat:'work', done:false, pinned:true },
 ];
 
-function getToday() { return new Date().toISOString().slice(0,10); }
+// ローカル日付を YYYY-MM-DD で返す（タイムゾーン対応）
+function getToday() {
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
 
 function load() {
   try {
@@ -509,31 +606,62 @@ function save() {
 
 let state = load();
 
+// 日付をまたいだ時の処理（前日の記録保存＋チェックリセット）
 function rollover() {
   const today = getToday();
   if (state.lastDate && state.lastDate !== today) {
     const total = state.tasks.length;
     const done = state.tasks.filter(t=>t.done).length;
+
+    // 前日の達成率を記録
     state.history[state.lastDate] = total>0 ? Math.round(done/total*100) : 0;
-    const yest = new Date(); yest.setDate(yest.getDate()-1);
-    const yestStr = yest.toISOString().slice(0,10);
+
+    // 昨日かどうか確認（連続判定）
+    const prev = new Date(today); prev.setDate(prev.getDate()-1);
+    const yestStr = prev.getFullYear()+'-'+String(prev.getMonth()+1).padStart(2,'0')+'-'+String(prev.getDate()).padStart(2,'0');
+
     if (state.lastDate === yestStr && done === total && total > 0) {
-      // 昨日全完了 → streak+1、開始日を記録
+      // 昨日全完了 → 連続+1
       state.streak = (state.streak||0) + 1;
       if (!state.streakStart) state.streakStart = yestStr;
     } else {
-      // サボった → リセット、今日から新たに開始
+      // サボり or 飛ばした → リセット
       state.streak = 0;
       state.streakStart = today;
     }
-    state.tasks = state.tasks.map(t=>({...t,done:false}));
+
+    // チェックだけリセット（タスク自体は残す）
+    state.tasks = state.tasks.map(t=>({...t, done:false}));
   }
-  state.lastDate = today; save();
+
+  // 初回起動時のstreakStart設定
+  if (!state.streakStart) state.streakStart = today;
+  state.lastDate = today;
+  save();
+}
+
+// AM0時になったら自動でrolloverを実行するタイマー
+function scheduleNextRollover() {
+  const now = new Date();
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1, 0, 0, 0);
+  const msUntilMidnight = tomorrow - now;
+  setTimeout(() => {
+    rollover();
+    updateDateDisplay();
+    render();
+    scheduleNextRollover(); // 次の日のためにまた予約
+  }, msUntilMidnight);
 }
 
 function getPct() {
   const t = state.tasks.length, d = state.tasks.filter(t=>t.done).length;
   return t===0 ? 0 : Math.round(d/t*100);
+}
+
+function updateDateDisplay() {
+  const now = new Date();
+  document.getElementById('date-str').textContent =
+    now.getFullYear()+'年'+(now.getMonth()+1)+'月'+now.getDate()+'日 ('+DAYS[now.getDay()]+')';
 }
 
 function renderProgress() {
@@ -543,16 +671,17 @@ function renderProgress() {
   document.getElementById('bar-fill').style.width = pct+'%';
   document.getElementById('pct-sub').textContent = done+' / '+total+' 完了';
   document.getElementById('streak-val').textContent = state.streak||0;
+
   // 開始日表示
   const sinceEl = document.getElementById('streak-since');
   if (state.streakStart) {
-    const d = new Date(state.streakStart);
-    sinceEl.textContent = (d.getMonth()+1)+'/'+d.getDate()+'〜';
+    const parts = state.streakStart.split('-');
+    sinceEl.textContent = parseInt(parts[1])+'/'+parseInt(parts[2])+'〜';
   } else {
-    // まだstreakStartがない場合は今日を仮表示
     const now2 = new Date();
     sinceEl.textContent = (now2.getMonth()+1)+'/'+now2.getDate()+'〜';
   }
+
   const msg = document.getElementById('all-done-msg');
   if (done>0 && done===total) msg.classList.add('show');
   else msg.classList.remove('show');
@@ -561,10 +690,16 @@ function renderProgress() {
 function renderTasks() {
   const list = document.getElementById('task-list');
   list.innerHTML = '';
-  state.tasks.forEach(task => {
+  state.tasks.forEach((task, idx) => {
     const el = document.createElement('div');
     el.className = 'task-item'+(task.done?' done':'');
+    const isFirst = idx === 0;
+    const isLast = idx === state.tasks.length - 1;
     el.innerHTML = `
+      <div class="move-btns">
+        <button class="move-btn" onclick="moveTask(${task.id},-1)" aria-label="上へ" ${isFirst?'disabled':''}>▲</button>
+        <button class="move-btn" onclick="moveTask(${task.id},1)" aria-label="下へ" ${isLast?'disabled':''}>▼</button>
+      </div>
       <button class="check-btn ${task.done?'checked':''}" onclick="toggle(${task.id})" aria-label="${task.done?'完了解除':'完了'}">
         <svg class="check-icon" viewBox="0 0 14 14"><polyline points="2,7 6,11 12,3"/></svg>
       </button>
@@ -582,15 +717,27 @@ function renderTasks() {
   });
 }
 
+function moveTask(id, dir) {
+  const idx = state.tasks.findIndex(t=>t.id===id);
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= state.tasks.length) return;
+  const tasks = [...state.tasks];
+  const tmp = tasks[idx];
+  tasks[idx] = tasks[newIdx];
+  tasks[newIdx] = tmp;
+  state.tasks = tasks;
+  save(); render();
+}
+
 function renderWeekly() {
   const today = new Date(), dow = today.getDay();
   const el = document.getElementById('weekly-bars');
   el.innerHTML = '';
   for (let i=0; i<7; i++) {
-    const d = new Date(today); d.setDate(today.getDate()-dow+i);
-    const ds = d.toISOString().slice(0,10);
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate()-dow+i);
+    const ds = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
     const isToday = ds===getToday();
-    const isFuture = d>today && !isToday;
+    const isFuture = d > today && !isToday;
     const pct = isToday ? getPct() : (state.history[ds]||0);
     const h = isFuture ? 3 : Math.max(3, Math.round(pct*0.5));
     const col = document.createElement('div');
@@ -599,14 +746,54 @@ function renderWeekly() {
       <div class="day-bar-wrap">
         <div class="day-bar" style="height:${h}px;background:${isToday?'var(--green)':isFuture?'#e0e8dc':'var(--green-mid)'}"></div>
       </div>
-      <div class="day-label">${DAYS[d.getDay()]}</div>
+      <div class="day-label" style="font-weight:${isToday?'700':'500'};color:${isToday?'var(--green)':'var(--muted)'};">${DAYS[d.getDay()]}</div>
+      <div class="day-label" style="font-size:9px;color:${isToday?'var(--green)':'#b0bfaa'};">${(d.getMonth()+1)+'/'+d.getDate()}</div>
       ${isToday?'<div class="today-mark"></div>':''}
     `;
     el.appendChild(col);
   }
 }
 
-function render() { renderProgress(); renderTasks(); renderWeekly(); }
+function renderMonthDots() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-indexed
+  const todayStr = getToday();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+
+  document.getElementById('month-card-title').textContent = (month+1)+'月の記録';
+
+  const container = document.getElementById('month-dots');
+  container.innerHTML = '';
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const ds = year+'-'+String(month+1).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+    const isToday = ds === todayStr;
+    const isFuture = ds > todayStr;
+
+    let cls = 'future';
+    if (isToday) {
+      cls = 'today';
+    } else if (!isFuture) {
+      const pct = state.history[ds];
+      if (pct === undefined) {
+        cls = 'future'; // 記録なし（アプリ導入前）
+      } else if (pct === 100) {
+        cls = 'achieved';
+      } else {
+        cls = 'failed';
+      }
+    }
+
+    const dot = document.createElement('div');
+    dot.className = 'day-dot ' + cls;
+    dot.textContent = day;
+    dot.title = ds + (cls==='achieved'?' ✅':cls==='failed'?' ❌':'');
+    container.appendChild(dot);
+  }
+}
+
+function render() { renderProgress(); renderTasks(); renderWeekly(); renderMonthDots(); }
 
 function toggle(id) {
   const t = state.tasks.find(t=>t.id===id);
@@ -642,13 +829,11 @@ document.getElementById('task-input').addEventListener('keydown', e=>{
   if(e.key==='Enter') addTask();
 });
 
-// 日付表示
-const now = new Date();
-const dateStr = now.getFullYear()+'年'+(now.getMonth()+1)+'月'+now.getDate()+'日 ('+DAYS[now.getDay()]+')';
-document.getElementById('date-str').textContent = dateStr;
-
-rollover();
-render();
+// 起動処理
+rollover();           // 日付またぎチェック
+updateDateDisplay();  // 日付表示
+render();             // 画面描画
+scheduleNextRollover(); // AM0時自動リセット予約
 </script>
 </body>
 </html>
